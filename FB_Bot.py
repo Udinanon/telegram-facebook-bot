@@ -1,6 +1,6 @@
 #! python3
 # FB_Bot.py - Scraper for Facebook pages that sends posts to Telegram channels
-# version is 20180312
+# version is 20180316
 # if you want to say anything go to @Udinanon on Telegram or check my email here on GitHub
 # DISTRIBUTED UNDER GNU LGPL v3 or latest
 # THE AUTHOR OF THE SCRIPT DOES NOT AUTHORIZE MILITARY USE OF HIS WORK OR USAGE IN ANY MILITARY-REALTED ENVIROMENT WITHOUT HIS EXPLICIT CONSENT
@@ -14,6 +14,7 @@
 	# handle shares
 	# handle continue reading in very long posts
 	#will probaby start using the Facebook API as soon as I understand how to use it for this
+	#might want to look at what can be simplified or implemented using the select function of BeautifulSoup
 
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
@@ -174,7 +175,7 @@ def send_photos(post): #used to send multiple photos in a chain of replies
 
 def handle_text(post):
 	#here it's handling the text
-	text_area=post.find("div", class_="_5pbx userContent")
+	text_area=post.select_one("div._5pbx.userContent")
 	if text_area:  # here it's detected if it is there
 		# hiding elements for long posts are detected
 		useless_texts=text_area.find_all(class_="text_exposed_hide")
