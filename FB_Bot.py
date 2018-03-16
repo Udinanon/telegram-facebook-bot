@@ -94,8 +94,8 @@ def argument_parser():  # description of the program and command line arguments
 	    description="Scraper for Facebook pages that sends posts to telegram channels, does not support gifs or videos as of now")
 	parser.add_argument("-pages_file", dest="input_file", default="./FB_pages.csv",
 	                    help="CSV file from which Facebook pages will be loaded, defaults to ./FB_pages.csv")
-	parser.add_argument("-log_file", dest="log_file", default="./" +
-	                    get_day() + ".log", help="Path to log file, defaults to ./YYMMDD.log")
+	parser.add_argument("-log_file", dest="log_file", default="./FB_" +
+	                    get_day() + ".log", help="Path to log file, defaults to ./FB_YYMMDD.log")
 	parser.add_argument("-debug_LVL", dest="debug_LVL",
 	                    default="INFO", help="Logging level, defaults to INFO")
 	return vars(parser.parse_args())
