@@ -29,11 +29,12 @@ import argparse
 TG_BASE = "https://api.telegram.org/bot{}/"
 # This is used to check the length of messages later
 TAG_RE = re.compile(r'<[^>]+>')
+USERAGENT={"User-Agent":'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36'}
 
 
 # basic stuff
 def get_url(url):  # get webpages as general files
-	response = requests.get(url)
+	response = requests.get(url, headers=USERAGENT)
 	logging.debug("GET URL:" + url + "\nRESPONSE:" + response.reason)
 	return response.content
 
@@ -49,7 +50,16 @@ def get_day():
 
 # id is used to determine the age of a post and to avoid duplicates
 
-
+'''
+The CSV file is just a list of the FB pages to be scarped, the first line is ignor4ed as it is supposed to be human readable
+It is structured as follows:
+	[0] A human readable name, not used by the script
+	[1] The name that is sent as the title of the post, usually a null string for single page channels and the page's name for multipage channels
+	[2] The URL of the posts section of the page
+	[3] The UNIX time of the last read post, set to 0 if its the first time so every post is sent
+	[4] Telegram Token of the bot that will carry out the operations
+	[5] Telegram channel ID on which the posts are suposed to go
+'''
 def update_csv(pages, input_file): #write new data to csv of Facebook Pages
 	with open(input_file, "w", newline='', encoding='utf_8') as file:
 		writer = csv.writer(file, quoting=csv.QUOTE_ALL)
@@ -59,7 +69,7 @@ def update_csv(pages, input_file): #write new data to csv of Facebook Pages
 
 
 def get_post_time(post): #find the UNIX time of the post
-	time_area = post.find(class_="_5ptz")
+	time_area = post.select_one("abbr._5ptz")
 	post_time = time_area["data-utime"]
 	return int(post_time)
 
@@ -76,7 +86,7 @@ def add_link(post): #add link to the top of the post's text
 
 def add_link2post(post): #add link to the Facebook post at the bottom of the post
 	post["link2post"] = handle_link2post(post)
-	text = post["text"] + "\n<a href='" + post["link2post"] + "'>POST</a>"
+	text = str(post["text"]) + "\n<a href='" + str(post["link2post"]) + "'>POST</a>"
 	return text
 
 
@@ -97,7 +107,7 @@ def argument_parser():  # description of the program and command line arguments
 	parser.add_argument("-log_file", dest="log_file", default="./FB_" +
 	                    get_day() + ".log", help="Path to log file, defaults to ./FB_YYMMDD.log")
 	parser.add_argument("-debug_LVL", dest="debug_LVL",
-	                    default="INFO", help="Logging level, defaults to INFO")
+	                    default="DEBUG", help="Logging level, defaults to DEBUG")
 	return vars(parser.parse_args())
 
 
@@ -107,7 +117,7 @@ def send_post(post): #for text posts
 	URL = TG_BASE.format(str(post["BOT"])) + "sendMessage"
 	data = {"chat_id": post["channel_ID"], "text": post["text"],
 	    "parse_mode": "html", "disable_web_page_preview": post.get("no_link")}
-	r = requests.get(URL, params=data)
+	r = requests.get(URL, params=data, headers=USERAGENT)
 	logging.info("SENDING POST, RESPONSE:" + r.reason +
 	             " STATUS CODE:" + str(r.status_code))
 	if r.status_code != 200:
@@ -126,7 +136,7 @@ def send_photo_multipart(post): #download and upload photos, used as backup when
 	URL = TG_BASE.format(str(post["BOT"])) + "sendPhoto"
 	data = {"chat_id": post["channel_ID"], "caption": post["text"],
 	    "parse_mode": "html", "reply_to_message_id": post.get("reply_id")}
-	r = requests.post(URL, data=data, files=photo)
+	r = requests.post(URL, data=data, files=photo, headers=USERAGENT)
 	if r.status_code != 200:
 		logging.critical("THERE WAS A N ERROR IN A REQUEST IN send_photo_multipart")
 		logging.critical("URL: " + str(r.url))
@@ -143,7 +153,7 @@ def send_photo(post): #send photo via URL, with the text if <200
 	URL = TG_BASE.format(str(post["BOT"])) + "sendPhoto"
 	data = {"chat_id": post["channel_ID"], "photo": post["photo"], "caption": post["text"],
 	    "parse_mode": "html", "reply_to_message_id": post.get("reply_id")}
-	r = requests.get(URL, params=data)
+	r = requests.get(URL, params=data, headers=USERAGENT)
 	logging.info("SENDING PHOTO, RESPONSE:" + r.reason +
 	             " STATUS CODE:" + str(r.status_code))
 	if (r.status_code == 400 and r.json()["description"] == "Bad Request: wrong file identifier/HTTP URL specified"): #when Facebook links don't work
@@ -156,7 +166,7 @@ def send_photo(post): #send photo via URL, with the text if <200
 		logging.critical("URL: " + str(r.url))
 		logging.critical("DATA: " + str(data))
 		logging.critical("REASON: " + str(r.reason))
-		logging.critical("RESPONSE: " + str(r))
+		logging.critical("RESPONSE: " + str(r.json()))
 	return r.json()["result"]["message_id"]
 
 def send_photos(post): #used to send multiple photos in a chain of replies
@@ -174,6 +184,7 @@ def send_photos(post): #used to send multiple photos in a chain of replies
 # jesus facebook is fuc*ing awful
 
 def handle_text(post):
+	text=handle_shares(post)
 	#here it's handling the text
 	text_area=post.select_one("div._5pbx.userContent")
 	if text_area:  # here it's detected if it is there
@@ -188,9 +199,20 @@ def handle_text(post):
 		profile_links=text_area.find_all("a", class_="profileLink")
 		for profile in profile_links:
 			profile.string.replace_with(str(profile)) #same thing for Facebook Profile Links
-		text=text_area.get_text()  # the text is then extraced from the HTML code
+		text=text+text_area.get_text()  # the text is then extraced from the HTML code
 		return text
 	else:
+		return ""
+
+def handle_shares(post):
+	try:
+		share_area=post.select_one("span._1nb_.fwn")
+		shared_page_link, shared_page=share_area.a["href"], share_area.a.string
+		link="\U0001F4E4 <a href="+str(shared_page_link)+">"+str(shared_page)+"</a>/n"
+		text=str(share_area.next_sibling_next_sibling.get_text())
+		text=str(link)+str(text)+"/n /n"
+		return str(text)
+	except:
 		return ""
 
 def find_photo(post):
@@ -289,26 +311,30 @@ def handle_link2post(post): #to generate the link to the Facebook post
 		link2post="https://www.facebook.com" + link2post_area.a["href"]
 		return link2post
 	except:
-		return None
+		return ""
 
 def content(post): #used to detect and handle the different kinds of posts and contents
 	post["text"]=handle_text(post)
 	post["text"]=add_link2post(post)
+	logging.debug("Basic text handled!")
 	if find_photo(post):
 		post["photo"]=find_photo(post)
 		post["first_photo"]=True
 		post["no_link"]=True
 		post["text"]=add_page_name(post)
+		logging.debug("Prepared the photo post")
 		send_photo(post)
 	elif find_link(post):
 		post["link"]=find_link(post)
 		post["text"]=add_link(post)
 		post["text"]=add_page_name(post)
+		logging.debug("prepared the link post")
 		send_post(post)
 	elif find_photos(post):
 		post["photos"]=find_photos(post)
 		post["no_link"]=True
 		post["text"]=add_page_name(post)
+		logging.debug("Prepared the multiple photo post")
 		send_photos(post)
 	elif has_video(post):
 		post["video"]=find_video(post)
@@ -316,11 +342,14 @@ def content(post): #used to detect and handle the different kinds of posts and c
 		if post["video"] != -1:  # if it's -1 then there was no video link and so it is send like a normal text post
 			post["text"]=add_video_link(post)
 			post["no_link"]=False
+			logging.debug("Found the video")
 		post["text"]=add_page_name(post)
+		logging.debug("Posting the video")
 		send_post(post)
 	else:
 		post["no_link"]=True
 		post["text"]=add_page_name(post)
+		logging.debug("Sending the post")
 		send_post(post)
 
 def new_posts_handling(posts, last_time, bot, channel_ID, page_name): #here it's checked of there are new posts
@@ -346,7 +375,7 @@ def gather_data(input_file): #pages are loaded for the input file
 			pages=list(reader)
 		logging.info("PAGES: " + str(pages))
 	except IOError:
-		logging.warning("Nessun file di input è stato trovato a " + input_file)
+		logging.warning("No input file was found at " + input_file)
 	return pages
 
 def main():
