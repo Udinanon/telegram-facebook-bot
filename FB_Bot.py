@@ -1,6 +1,6 @@
 #! python3
 # FB_Bot.py - Scraper for Facebook pages that sends posts to Telegram channels
-# version is 20180316
+# version is 20180624
 # if you want to say anything go to @Udinanon on Telegram or check my email here on GitHub
 # DISTRIBUTED UNDER GNU LGPL v3 or latest
 # THE AUTHOR OF THE SCRIPT DOES NOT AUTHORIZE MILITARY USE OF HIS WORK OR USAGE IN ANY MILITARY-REALTED ENVIROMENT WITHOUT HIS EXPLICIT CONSENT
@@ -13,7 +13,6 @@
 	# handle gifs //PARTIALLY
 	# handle shares
 	# handle continue reading in very long posts
-	#will probaby start using the Facebook API as soon as I understand how to use it for this
 	#might want to look at what can be simplified or implemented using the select function of BeautifulSoup
 
 from bs4 import BeautifulSoup
@@ -25,6 +24,7 @@ import cgi
 import re
 import logging
 import argparse
+import json
 
 TG_BASE = "https://api.telegram.org/bot{}/"
 # This is used to check the length of messages later
@@ -51,7 +51,7 @@ def get_day():
 # id is used to determine the age of a post and to avoid duplicates
 
 '''
-The CSV file is just a list of the FB pages to be scarped, the first line is ignor4ed as it is supposed to be human readable
+The CSV file is just a list of the FB pages to be scarped, the first line is ignored as it is supposed to be human readable
 It is structured as follows:
 	[0] A human readable name, not used by the script
 	[1] The name that is sent as the title of the post, usually a null string for single page channels and the page's name for multipage channels
@@ -101,7 +101,7 @@ def remove_tags(text): #used to check if the shown message will be <200 chars in
 
 def argument_parser():  # description of the program and command line arguments
 	parser = argparse.ArgumentParser(
-	    description="Scraper for Facebook pages that sends posts to telegram channels, does not support gifs or videos as of now")
+	    description="Scraper for Facebook pages that sends posts to telegram channels, does not support shared posts as of now")
 	parser.add_argument("-pages_file", dest="input_file", default="./FB_pages.csv",
 	                    help="CSV file from which Facebook pages will be loaded, defaults to ./FB_pages.csv")
 	parser.add_argument("-log_file", dest="log_file", default="./FB_" +
@@ -303,6 +303,12 @@ def find_video(post):
 					video_link=video_link_dict["https://lm.facebook.com/l.php?u"]
 				return video_link[0]
 			continue
+	else: #they seem to have changed how it works
+		video_areas=soup.find("div", {"data-sigil":"inlineVideo"})
+		if video_areas != [] and video_areas != None:
+		    data=video_areas["data-store"]
+		    data_dict=json.loads(data) #yes it's a JSON dictionary inside an HTML tag, I hate this timeline
+		    return data_dict["src"]
 	return -1  # lives do have /videos/ in the URL but don't have a target _blank, to catch this possibility it returns -1
 
 def handle_link2post(post): #to generate the link to the Facebook post
