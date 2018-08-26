@@ -1,25 +1,30 @@
-
-#! python3
+#! python3.6
 # FB_Bot.py - Scraper for Facebook pages that sends posts to Telegram channels
-# version is 20180626
+# version is 20180714
 # if you want to say anything go to @Udinanon on Telegram or check my email here on GitHub
 # DISTRIBUTED UNDER GNU LGPL v3 or latest
 # THE AUTHOR OF THE SCRIPT DOES NOT AUTHORIZE MILITARY USE OF HIS WORK OR USAGE IN ANY MILITARY-REALTED ENVIROMENT WITHOUT HIS EXPLICIT CONSENT
 
 # TO DO LIST:
-# better comment the code //getting better
-# reorder the code and make it more readable //it's getting better
-# add command line arguments //partial
-# handle HD photos
-# handle gifs //PARTIALLY
-# handle shares
-# handle continue reading in very long posts
-# might want to look at what can be simplified or implemented using the select function of BeautifulSoup
+    # better comment the code //getting better
+    # reorder the code and make it more readable //it's getting better
+    # add command line arguments //partial
+    # handle HD photos
+    # handle gifs //PARTIALLY
+    # handle shares
+    # handle continue reading in very long posts
+    # might want to look at what can be simplified or implemented using the select function of BeautifulSoup
+    # might scrap BeautifulSoup and go with RequestsHTML, seems less of a hassle
+    # complete support to add new Facebook pages and Telegram channels
 
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
 import csv
 import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+import requests_html
+from requests_html import HTMLSession
 import time
 import cgi
 import re
@@ -34,8 +39,19 @@ USERAGENT = {"User-Agent": 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (
 
 
 # basic stuff
+
+def create_session():
+    session = requests.Session()
+    retry = Retry(total=10, connect=3, redirect=5, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+
 def get_url(url):  # get webpages as general files
-    response = requests.get(url, headers=USERAGENT)
+    with create_session() as session:
+        response = session.get(url, headers=USERAGENT)
     logging.debug("GET URL:" + url + "\nRESPONSE:" + response.reason)
     return response.content
 
@@ -191,8 +207,7 @@ def send_photos(post):  # used to send multiple photos in a chain of replies
 
 
 def handle_text(post):
-    text = handle_shares(post)
-    # here it's handling the text
+        # here it's handling the text
     text_area = post.select_one("div._5pbx.userContent")
     if text_area:  # here it's detected if it is there
         # hiding elements for long posts are detected
@@ -207,10 +222,10 @@ def handle_text(post):
         profile_links = text_area.find_all("a", class_="profileLink")
         for profile in profile_links:
             profile.string.replace_with(str(profile))  # same thing for Facebook Profile Links
-        text = text + text_area.get_text()  # the text is then extraced from the HTML code
-        return text
+        text = text_area.get_text()  # the text is then extraced from the HTML code
+        return str(post["text"]+str(text))
     else:
-        return ""
+        return post["text"]
 
 
 def handle_shares(post):
@@ -218,7 +233,7 @@ def handle_shares(post):
         share_area = post.select_one("span._1nb_.fwn")
         shared_page_link, shared_page = share_area.a["href"], share_area.a.string
         link = "\U0001F4E4 <a href=" + str(shared_page_link) + ">" + str(shared_page) + "</a>/n"
-        text = str(share_area.next_sibling_next_sibling.get_text())
+        text = str(share_area.next_sibling.next_sibling.get_text())
         text = str(link) + str(text) + "/n /n"
         return str(text)
     except:
@@ -338,6 +353,7 @@ def handle_link2post(post):  # to generate the link to the Facebook post
 
 
 def content(post):  # used to detect and handle the different kinds of posts and contents
+    post["text"] = handle_shares(post)
     post["text"] = handle_text(post)
     post["text"] = add_link2post(post)
     logging.debug("Basic text handled!")
@@ -391,6 +407,16 @@ def new_posts_handling(posts, last_time, bot, channel_ID, page_name):  # here it
             logging.debug("Appended new post time: " + str(post_time))
     return max(times)  # the new top post time is returned
 
+def generate_soup(URL): #now we use RequestsHTML, which can compile Javascript and handes session errors better
+    with HTMLSession() as session:
+        retry = Retry(total=10, connect=3, redirect=5, backoff_factor=0.5) #i'm not even sure what it does but helps woth facebook stoppoing the bot
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter) #it's oine of the reasons why I'm using RequestsHTML
+        r=session.get(URL)
+        r.html.render(timeout=100) #here the Javascript is rendered in a mock browser
+        body=r.html.find("body", first=True).html #and the body of the page is extracetd to be prcessed by BeautifulSoup
+    return BeautifulSoup(body, "html.parser")
 
 def gather_data(input_file):  # pages are loaded for the input file
     pages = []
@@ -404,6 +430,24 @@ def gather_data(input_file):  # pages are loaded for the input file
         logging.warning("No input file was found at " + input_file)
     return pages
 
+# def update_pages(csv_file, bot_token):
+#     with open("FB_BOT_ADDED.txt", "r") as file:
+#         n_line=int(file.read())
+#     with open("Added_FB_Pages.log", "r") as new_pages_file:
+#         for i in range(n_line):
+#             next(new_pages_file, None)
+#         new_pages=[]
+#             # "HUMAN REDABLE","NAME","URL","LAST_TIME","TOKEN","ID"
+#             next(new_pages_file, None)
+#             new_page=""
+#             channel_id=new_pages_file.readline()
+#             page_url=new_pages_file.readline()
+#             page_name=get_page_name(page_url)
+#             human_name=page_name+" @ "+channel_id
+#             new_page='"'+human_name+'", "'+page_name+'", "'+page_url+'", 0, "'+bot_token+'", "'+channel_id+'"'
+#             new_pages.append(new_page)
+#         with open(csv_file, "a") as pages:
+
 
 def main():
     args = argument_parser()  # command line arguments
@@ -411,11 +455,11 @@ def main():
     if not isinstance(numeric_level, int):
         raise ValueError("Invalid log level in command line: " + args["debug_LVL"])
     logging.basicConfig(filename=args["log_file"], level=numeric_level)
-    input_file = args["input_file"]
     logging.info("LOADED INPUT FILE: " + args["input_file"])
     try:
         while True:  # the main loop
-            pages = gather_data(input_file)
+            # update_pages(args["input_file"])
+            pages = gather_data(args["input_file"])
             for page in pages:
                 #[0]is HUMAN REDABLE data, [1] is NAME, [2] is URL, [3] is LAST_TIME, [4] is TOKEN and [5] is ID
                 page_name = page[1]
@@ -426,12 +470,11 @@ def main():
                 TOKEN = page[4]
                 channel_ID = page[5]
                 last_time = page[3]
-                data = get_url(URL)
-                soup = BeautifulSoup(data, "html.parser")
+                soup = generate_soup(URL)
                 posts = soup.find_all("div", "_427x")  # seems to be hardcoded in FB's HTML code to define posts
                 posts.reverse()
                 page[3] = new_posts_handling(posts, last_time, TOKEN, channel_ID, page_name)
-                update_csv(pages, input_file)
+                update_csv(pages, args["input_file"])
             date = get_date()
             logging.info("Now sleeping, Time: " + date)
             time.sleep(600)
