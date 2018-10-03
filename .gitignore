@@ -1,4 +1,6 @@
-
-FB_page_adder_bot.py
 *.log
 *.csv
+FB_tester.py
+*.png
+*.txt
+*.ini

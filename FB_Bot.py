@@ -1,6 +1,6 @@
 #! python3.6
 # FB_Bot.py - Scraper for Facebook pages that sends posts to Telegram channels
-# version is 20180714
+# version is 20181001
 # if you want to say anything go to @Udinanon on Telegram or check my email here on GitHub
 # DISTRIBUTED UNDER GNU LGPL v3 or latest
 # THE AUTHOR OF THE SCRIPT DOES NOT AUTHORIZE MILITARY USE OF HIS WORK OR USAGE IN ANY MILITARY-REALTED ENVIROMENT WITHOUT HIS EXPLICIT CONSENT
@@ -8,14 +8,8 @@
 # TO DO LIST:
     # better comment the code //getting better
     # reorder the code and make it more readable //it's getting better
-    # add command line arguments //partial
     # handle HD photos
-    # handle gifs //PARTIALLY
-    # handle shares
     # handle continue reading in very long posts
-    # might want to look at what can be simplified or implemented using the select function of BeautifulSoup
-    # might scrap BeautifulSoup and go with RequestsHTML, seems less of a hassle
-    # complete support to add new Facebook pages and Telegram channels
 
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
@@ -30,11 +24,13 @@ import cgi
 import re
 import logging
 import argparse
+import configparser
 import json
 
 TG_BASE = "https://api.telegram.org/bot{}/"
 # This is used to check the length of messages later
 TAG_RE = re.compile(r'<[^>]+>')
+TIME_regex = re.compile(r"(#)(1[0-9]{9})(#)")
 USERAGENT = {"User-Agent": 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36'}
 
 
@@ -61,8 +57,8 @@ def get_date():
     return date
 
 
-def get_day():
-    day = time.strftime("%y%m%d")
+def get_day(form="%y%m%d"):
+    day = time.strftime(str(form))
     return day
 
 # id is used to determine the age of a post and to avoid duplicates
@@ -75,8 +71,7 @@ It is structured as follows:
 	[1] The name that is sent as the title of the post, usually a null string for single page channels and the page's name for multipage channels
 	[2] The URL of the posts section of the page
 	[3] The UNIX time of the last read post, set to 0 if its the first time so every post is sent
-	[4] Telegram Token of the bot that will carry out the operations
-	[5] Telegram channel ID on which the posts are suposed to go
+	[4] Telegram channel ID on which the posts are suposed to go
 '''
 
 
@@ -93,6 +88,16 @@ def get_post_time(post):  # find the UNIX time of the post
     post_time = time_area["data-utime"]
     return int(post_time)
 
+def get_mobile_URL(URL):
+    return URL[:8:] + "m" + URL[11::]
+
+
+def get_page_name(URL):
+    session=HTMLSession()
+    URL=get_mobile_URL(URL)
+    r=session.get(URL)
+    name=r.html.find("title", first =True)
+    return name.text.strip(" - Post | Facebook")
 
 def add_video_link(post):  # add video link to top of the post's text
     text = "<a href='" + post["video"] + "'>VIDEO</a> \n" + post["text"]
@@ -118,16 +123,23 @@ def add_page_name(post):  # add page name in bold to the top of the post
 def remove_tags(text):  # used to check if the shown message will be <200 chars in Telegram
     return TAG_RE.sub('', text)
 
+def config_parser(ini_file):
+    config=configparser.ConfigParser(interpolation=None)
+    config.read(ini_file)
+    return config
+
+def configure_logging(log_config):
+    numeric_level=getattr(logging, log_config["debug_level"].upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError("Invalid log level in configuration file: " + log_config["debug_level"])
+    log_config["log_file"]=log_config["log_file_name"]+get_day(log_config["date_structure"])+".log"
+    logging.basicConfig(filename = log_config["log_file"], level = numeric_level)
+
 
 def argument_parser():  # description of the program and command line arguments
     parser = argparse.ArgumentParser(
-        description="Scraper for Facebook pages that sends posts to telegram channels, does not support shared posts as of now")
-    parser.add_argument("-pages_file", dest="input_file", default="./FB_pages.csv",
-                        help="CSV file from which Facebook pages will be loaded, defaults to ./FB_pages.csv")
-    parser.add_argument("-log_file", dest="log_file", default="./FB_" +
-                        get_day() + ".log", help="Path to log file, defaults to ./FB_YYMMDD.log")
-    parser.add_argument("-debug_LVL", dest="debug_LVL",
-                        default="DEBUG", help="Logging level, defaults to DEBUG")
+        description="Scraper for Facebook pages that sends posts to telegram channels")
+    parser.add_argument("-ini-file", dest="ini_file", help="INI file from which all settings are read; defaults to ./FB_Bot.ini", default="./FB_Bot.ini")
     return vars(parser.parse_args())
 
 
@@ -232,9 +244,13 @@ def handle_shares(post):
     try:
         share_area = post.select_one("span._1nb_.fwn")
         shared_page_link, shared_page = share_area.a["href"], share_area.a.string
-        link = "\U0001F4E4 <a href=" + str(shared_page_link) + ">" + str(shared_page) + "</a>/n"
+        link = "\U0001F4E4 <a href='" + str(shared_page_link) + "'>" + str(shared_page) + "</a>\n"
+        strings = share_area.next_sibling.next_sibling.find_all(string=re.compile("[<>&]"))
+        for string in strings:
+            # here link are recompiled as text so they can be read later and can be understood by Telegram
+            string.replace_with(str(cgi.escape(string)))
         text = str(share_area.next_sibling.next_sibling.get_text())
-        text = str(link) + str(text) + "/n /n"
+        text = str(link) + str(text) + "\n \n"
         return str(text)
     except:
         return ""
@@ -320,7 +336,7 @@ def has_video(post):  # to detetc of a post has a Facebook video
 
 def find_video(post):
     # facebook mobile has plain link to the videos on their servers so i can strip them and use those directly
-    mobile_URL = post["link2post"][:8:] + "m" + post["link2post"][11::]
+    mobile_URL=get_mobile_URL(post["link2post"])
     soup = BeautifulSoup(get_url(mobile_URL), "html.parser")
     video_areas = soup.find_all("a", target="_blank")
     if video_areas != [] and video_areas != None:
@@ -430,54 +446,78 @@ def gather_data(input_file):  # pages are loaded for the input file
         logging.warning("No input file was found at " + input_file)
     return pages
 
-# def update_pages(csv_file, bot_token):
-#     with open("FB_BOT_ADDED.txt", "r") as file:
-#         n_line=int(file.read())
-#     with open("Added_FB_Pages.log", "r") as new_pages_file:
-#         for i in range(n_line):
-#             next(new_pages_file, None)
-#         new_pages=[]
-#             # "HUMAN REDABLE","NAME","URL","LAST_TIME","TOKEN","ID"
-#             next(new_pages_file, None)
-#             new_page=""
-#             channel_id=new_pages_file.readline()
-#             page_url=new_pages_file.readline()
-#             page_name=get_page_name(page_url)
-#             human_name=page_name+" @ "+channel_id
-#             new_page='"'+human_name+'", "'+page_name+'", "'+page_url+'", 0, "'+bot_token+'", "'+channel_id+'"'
-#             new_pages.append(new_page)
-#         with open(csv_file, "a") as pages:
-
+def update_pages(csv_file, config, ini_file): #also updates log_file so ther isn't a mismacth between current date and log file
+    adder_config=config["ADDER"]
+    last_time=adder_config["last_request_unix"]
+    with open(adder_config["new_pages_file"], "r") as file:
+        data=file.readlines()
+    print(str(len(data)))
+    for i in range(len(data)):
+        print(str(i))
+        if TIME_regex.search(data[i]):
+            if int(data[i].strip().strip("#")) == int(last_time):
+                data=data[i+1::]
+                logging.info("NEW PAGES FOUND:\n"+str(data))
+                break
+    added=[]
+    new_time=int(last_time)
+    j=0
+    for i in range(len(data)):
+        if TIME_regex.search(data[i]):
+            if int(data[i].strip().strip("#")) > new_time:
+                new_time=int(data[i].strip().strip("#"))
+            if len(data[j+1:i:])>5:
+                added.append(data[j+1:i:])
+            else:
+                logging.warning("INCORRECTLY FORMATTED DATA IN "+str(adder_config["new_pages_file"])+" AT LINE "+str(i))
+            j=i
+    lines=[]
+    for request in added:
+        channel_name=request[2].strip()
+        channel_id=request[3].strip()
+        links=request[4::]
+        for link in links:
+            page_name=get_page_name(link)
+            human_name=page_name+" @ "+channel_name
+            line=[str(human_name), str(page_name), str(link.strip()), "0", str(channel_id)]
+            lines.append(line)
+    with open(csv_file, "a", encoding="utf_8") as file:
+        writer=csv.writer(file, quoting=csv.QUOTE_ALL)
+        writer.writerows(lines)
+    adder_config["last_request_unix"]=str(new_time)
+    with open(ini_file, "w") as file:
+        config.write(file)
 
 def main():
     args = argument_parser()  # command line arguments
-    numeric_level = getattr(logging, args["debug_LVL"].upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError("Invalid log level in command line: " + args["debug_LVL"])
-    logging.basicConfig(filename=args["log_file"], level=numeric_level)
-    logging.info("LOADED INPUT FILE: " + args["input_file"])
+    config=config_parser(args["ini_file"])
+    basic_config, adder_config, log_config=config["BASIC"], config["ADDER"], config["LOG"]
+    configure_logging(log_config)
+    pages_file, TOKEN=basic_config["pages_file"], basic_config["bot_token"]
+    logging.info("LOADED FB PAGES FROM FILE: " + pages_file)
+    logging.info("LOADED TOKEN: "+TOKEN)
     try:
         while True:  # the main loop
-            # update_pages(args["input_file"])
-            pages = gather_data(args["input_file"])
+            update_pages(pages_file, config, args["ini_file"])
+            pages = gather_data(pages_file)
             for page in pages:
-                #[0]is HUMAN REDABLE data, [1] is NAME, [2] is URL, [3] is LAST_TIME, [4] is TOKEN and [5] is ID
+                #[0]is HUMAN REDABLE data, [1] is NAME, [2] is URL, [3] is LAST_TIME and [4] is ID
                 page_name = page[1]
-                logging.info("HUMAN DATA: " + page[0])
-                logging.info("SHOWN ON CHANNEL: " + page_name)
+                logging.info("HUMAN DATA: " + page[0].encode("ascii", "ignore").decode("ascii", "ignore"))
+                logging.info("SHOWN ON CHANNEL: " + page_name.encode("ascii", "ignore").decode("ascii", "ignore"))
                 URL = page[2]
                 logging.info("PAGE URL: " + URL)
-                TOKEN = page[4]
-                channel_ID = page[5]
+                channel_ID = page[4]
                 last_time = page[3]
                 soup = generate_soup(URL)
                 posts = soup.find_all("div", "_427x")  # seems to be hardcoded in FB's HTML code to define posts
                 posts.reverse()
                 page[3] = new_posts_handling(posts, last_time, TOKEN, channel_ID, page_name)
-                update_csv(pages, args["input_file"])
+                update_csv(pages, pages_file)
             date = get_date()
-            logging.info("Now sleeping, Time: " + date)
-            time.sleep(600)
+            logging.info("Now sleeping, time: " + date)
+            print("Now sleeping, time: "+date)
+            time.sleep(int(basic_config["interval_between_updates"]))
     except Exception as e:
         logging.critical("ERROR AT " + get_date() + "\nERROR INFO:" + str(e))
         raise e
