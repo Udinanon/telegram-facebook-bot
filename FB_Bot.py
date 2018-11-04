@@ -97,7 +97,7 @@ def get_page_name(URL):
     URL=get_mobile_URL(URL)
     r=session.get(URL)
     name=r.html.find("title", first =True)
-    return name.text.strip(" - Post | Facebook")
+    return name.text.replace(" - Post | Facebook", "")
 
 def add_video_link(post):  # add video link to top of the post's text
     text = "<a href='" + post["video"] + "'>VIDEO</a> \n" + post["text"]
@@ -466,10 +466,10 @@ def update_pages(csv_file, config, ini_file): #also updates log_file so ther isn
         if TIME_regex.search(data[i]):
             if int(data[i].strip().strip("#")) > new_time:
                 new_time=int(data[i].strip().strip("#"))
-            if len(data[j+1:i:])>5:
-                added.append(data[j+1:i:])
-            else:
-                logging.warning("INCORRECTLY FORMATTED DATA IN "+str(adder_config["new_pages_file"])+" AT LINE "+str(i))
+                if len(data[j+1:i:])>4:
+                    added.append(data[j+1:i:])
+                else:
+                    logging.warning("INCORRECTLY FORMATTED DATA IN "+str(adder_config["new_pages_file"])+" AT LINE "+str(i))
             j=i
     lines=[]
     for request in added:
@@ -481,7 +481,7 @@ def update_pages(csv_file, config, ini_file): #also updates log_file so ther isn
             human_name=page_name+" @ "+channel_name
             line=[str(human_name), str(page_name), str(link.strip()), "0", str(channel_id)]
             lines.append(line)
-    with open(csv_file, "a", encoding="utf_8") as file:
+    with open(csv_file, "a", encoding="utf_8", newline='') as file:
         writer=csv.writer(file, quoting=csv.QUOTE_ALL)
         writer.writerows(lines)
     adder_config["last_request_unix"]=str(new_time)

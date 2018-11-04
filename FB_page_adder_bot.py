@@ -231,7 +231,7 @@ def save_data(user_data):
 def main():
     args=argument_parser()
     basic_config, log_config=config_parser(args["ini_file"])
-    logging.info("FB ADDER BOT")
+    print("FB ADDER BOT")
     global outfile
     logging.info("OUTPUT FILE: " +out_file)
     updater=Updater(token =TOKEN)
